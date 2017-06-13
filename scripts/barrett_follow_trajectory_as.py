@@ -239,6 +239,10 @@ class JointTracjectoryActionServer(object):
         finger3_array = np.array(msg.finger3)
         # palm_array = np.array(msg.palm)
 
+        # First several receive messages are useless
+        if len(finger1_array) == 0:
+            return
+
         finger1_nonzero = np.where((finger1_array - self._f1_offsets) > self.TACTILE_THRESHOLD)[0]
         finger2_nonzero = np.where((finger2_array - self._f2_offsets) > self.TACTILE_THRESHOLD)[0]
         finger3_nonzero = np.where((finger3_array - self._f3_offsets) > self.TACTILE_THRESHOLD)[0]
