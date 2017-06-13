@@ -12,6 +12,7 @@ from control_msgs.msg import (FollowJointTrajectoryAction,
 
 from barrett_tactile_msgs.msg import TactileInfo
 from bhand_controller.srv import SetControlMode
+from bhand_controller.msg import State, TactileArray, Service
 
 from collections import namedtuple
 
@@ -33,6 +34,37 @@ def dof_state_to_np(dof):
 def dof_state_from_np(dof_np):
     return DOF_STATE(
         spread=dof_np[0], f1=dof_np[2], f2=dof_np[3], f3=dof_np[1])
+
+
+#INIT NODE code
+
+# try:
+#     self._service_bhand_actions = rospy.ServiceProxy(self._actions_service_name, Actions)
+# except ValueError, e:
+#     rospy.logerr('BHandGUI: Error connecting service (%s)'%e)
+
+# def send_bhand_action(self, action):    
+#     '''
+#         Calls the service to set the control mode of the hand
+#         @param action: Action number (defined in msgs/Service.msg)
+#         @type action: int
+#     '''         
+#     try:
+#         ret = self._service_bhand_actions(action)               
+#     except ValueError, e:
+#         rospy.logerr('BHandGUI::send_bhand_action: (%s)'%e)
+#     except rospy.ServiceException, e:
+#         rospy.logerr('BHandGUI::send_bhand_action: (%s)'%e)
+#         QMessageBox.warning(self._widget, "Warning", "Service is not available: send_bhand_action")
+
+# self.send_bhand_action(Service.INIT_HAND)
+
+#Get Tactile Info Code
+# self._tact_topic = '/%s/tact_array'%self.bhand_node_name 
+# try:
+#     self._tact_subscriber = rospy.Subscriber(self._tact_topic, TactileArray, self._receive_tact_data)
+# except ValueError, e:
+#     rospy.logerr('BHandGUI: Error connecting topic (%s)'%e)
 
 
 class JointTracjectoryActionServer(object):
