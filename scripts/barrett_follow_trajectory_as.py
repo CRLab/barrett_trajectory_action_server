@@ -211,7 +211,7 @@ class JointTracjectoryActionServer(object):
         while not rospy.is_shutdown():
             response = barrett_trajectory_action_server.msg.TactileContactFrames(tactile_frames=list(self.tactile_info))
 
-            publisher_get_tactile_info.publish(response)
+            self.publisher_get_tactile_info.publish(response)
             loop.sleep()
 
     def send_bhand_action(self, action):    
