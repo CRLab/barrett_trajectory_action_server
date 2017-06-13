@@ -3,7 +3,8 @@ import sensor_msgs.msg
 import rospy
 import threading
 import numpy as np
-
+import std_srvs.srv
+import barrett_trajectory_action_server.srv 
 from actionlib import SimpleActionServer
 
 from control_msgs.msg import (FollowJointTrajectoryAction,
@@ -13,16 +14,27 @@ from control_msgs.msg import (FollowJointTrajectoryAction,
 from barrett_tactile_msgs.msg import TactileInfo
 from bhand_controller.srv import SetControlMode
 
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 
 DOF_STATE = namedtuple("DOF", ["spread", "f1", "f2", "f3"])
 
+# INDICES FOR DOFS TO BE SENT TO THE HAND TO EXECUTE
+SPREAD_DOF_INDEX = 0
+F1_DOF_INDEX = 2
+F2_DOF_INDEX = 3
+F3_DOF_INDEX = 1
+
+# INDICES for DOFS from waypoints provided by MOVEIt!
+SPREAD_WAYPOINT_INDEX = 0 
+F1_WAYPOINT_INDEX = 1
+F2_WAYPOINT_INDEX = 2
+F3_WAYPOINT_INDEX = 3
 
 def waypoint_to_np(wp):
-    return np.array([wp.positions[0],  # spread
-                     wp.positions[3],  # f3
-                     wp.positions[1],  # f1
-                     wp.positions[2],  # f2
+    return np.array([wp.positions[SPREAD_WAYPOINT_INDEX],  # spread
+                     wp.positions[F3_WAYPOINT_INDEX],  # f3
+                     wp.positions[F1_WAYPOINT_INDEX],  # f1
+                     wp.positions[F2_WAYPOINT_INDEX],  # f2
                  ])
 
 
@@ -32,7 +44,7 @@ def dof_state_to_np(dof):
 
 def dof_state_from_np(dof_np):
     return DOF_STATE(
-        spread=dof_np[0], f1=dof_np[2], f2=dof_np[3], f3=dof_np[1])
+        spread=dof_np[SPREAD_DOF_INDEX], f1=dof_np[F1_DOF_INDEX], f2=dof_np[F2_DOF_INDEX], f3=dof_np[F3_DOF_INDEX])
 
 
 class JointTracjectoryActionServer(object):
@@ -52,6 +64,11 @@ class JointTracjectoryActionServer(object):
 
         self.hand_cmd_pub = rospy.Publisher("/bhand_node/command", sensor_msgs.msg.JointState, queue_size=10)
         self.service_set_mode = rospy.ServiceProxy('/bhand_node/set_control_mode', SetControlMode)
+
+        self.service_reset_tactile_state = rospy.Service('/barrett/reset_tactile_state', std_srvs.srv.Empty, self.reset_tactile_state)
+        self.service_set_ignore_tactile_state = rospy.Service('/barrett/set_ignore_tactile_state',  std_srvs.srv.SetBool, self.set_ignore_tactile_state)
+        self.service_get_tactile_info = rospy.Service('/barrett/get_tactile_info',  barrett_trajectory_action_server.srv.GetTactileContacts, self.get_tactile_info)
+
         self.current_joint_and_dof_state_mutex = threading.Lock()
         self.current_tactile_state_mutex = threading.Lock()
 
@@ -63,6 +80,10 @@ class JointTracjectoryActionServer(object):
         
         self.feedback = FollowJointTrajectoryFeedback()
         self.feedback.joint_names = ['bh_j11_joint', 'bh_j32_joint', 'bh_j12_joint', 'bh_j22_joint']
+
+        self.ignore_tactile_state = False
+        self.activated_dofs = np.ones(4)
+        self.tactile_info = set()
 
         self.result = FollowJointTrajectoryResult()
     
@@ -89,19 +110,14 @@ class JointTracjectoryActionServer(object):
             rospy.logerr(
                 "CANNOT EXECUTE TRAJECTORY: our current dof values: %s, are far from the trajectory starting dof values: "
                 % (current_dof_np, start_waypoint_np))
-
-        else:
-            rospy.logdebug("Beginning Trajectory Execution")
+            return
               
         start_time = rospy.Time.now()
         rate = rospy.Rate(self.control_rate)
         success = True
         
-        rospy.logdebug("Trajectory has: {} ".format(len(goal.trajectory.points)))
         for i, waypoint in enumerate(goal.trajectory.points):
-            
-            rospy.logdebug("Working on waypoint: " + str(waypoint))
-            
+                        
             # first make sure we have not deviated to far from trajectory
             # abort if so
             current_dof_np = dof_state_to_np(self.current_dof)
@@ -125,8 +141,7 @@ class JointTracjectoryActionServer(object):
             cmd_msg.position = [0, 0, 0, 0]  # [self.base_spread, self.finger3_spread, self.finger1_spread, self.finger2_spread]                                                                            
             cmd_msg.velocity = velocity
             cmd_msg.effort = [0,0,0,0]
-            rospy.logdebug("waypoint velocity: "  + str(waypoint.velocities))
-            rospy.logdebug("cmd_msg velocity: " + str(cmd_msg.velocity))
+
             self.feedback.desired = waypoint
             self.feedback.actual.positions = self.current_joint_state
             self.feedback.actual.velocities = self.current_joint_state
@@ -139,19 +154,15 @@ class JointTracjectoryActionServer(object):
                 waypoint_np = waypoint_to_np(waypoint)
                 current_position_error = current_dof_np - waypoint_np
                 velocity = np.clip(-gain * current_position_error, -0.1, 0.1)
-                # for index in range(len(velocity)):
-                #     if np.abs(velocity[index]) < 0.02 and waypoint.positions[index] != 0:
-                #         velocity[index] = np.sign(velocity[index]) * 0.02
-
+                velocity *= self.activated_dofs
 
                 cmd_msg.velocity = velocity
-                rospy.logdebug("Position Error: " + str(current_position_error))
-                rospy.logdebug("Velocity: " + str(velocity))
                 tolerance = 0.03 if i == len(goal.trajectory.points) - 1 else 0.15
-                rospy.logdebug("Tolerance {}, I: {}".format(tolerance, i))
+                rospy.logdebug("Velocity {}, tolerance {}".format(velocity, tolerance))
+
                 if np.allclose(current_position_error, np.zeros_like(current_position_error), atol=tolerance):
-                    rospy.logdebug("Jumping to next trajectory point, since we have reached current waypoint")
                     break
+
                 # check if something external has told us to stop (Ctrl C) or a prempt
                 if self.action_server.is_preempt_requested() or rospy.is_shutdown():
                     self.action_server.set_preempted()
@@ -160,29 +171,9 @@ class JointTracjectoryActionServer(object):
                 
                 # Everything is going smoothly, send velocity cmd to hand
                 self.hand_cmd_pub.publish(cmd_msg)
-                #rospy.logdebug("Published Command: ")
-                #rospy.logdebug(cmd_msg)
     
                 rate.sleep()
 
-        '''
-        # Now do proportional control to get hand to the final desired state
-        self.service_set_mode('POSITION')
-
-        import IPython
-        IPython.embed()
-        cmd_msg = sensor_msgs.msg.JointState()
-        cmd_msg.name = ['bh_j11_joint', 'bh_j32_joint', 'bh_j12_joint', 'bh_j22_joint']
-        cmd_msg.position = end_waypoint.position  # [self.base_spread, self.finger3_spread, self.finger1_spread, self.finger2_spread]                                                                       
-        cmd_msg.velocity = [0, 0, 0, 0]
-        cmd_msg.effort = [0, 0, 0, 0]
-
-        rospy.logdebug("Published Command: ")
-        rospy.logdebug(cmd_msg)
-
-        
-        #self.hand_cmd_pub.publish(cmd_msg)
-        '''
         if success:
             rospy.loginfo('Barret Hand Follow Joint Trajectory Succeeded')
             self.result.error_code = 0 # 0 means Success 
@@ -201,10 +192,39 @@ class JointTracjectoryActionServer(object):
             self.current_joint_and_dof_state_mutex.release()
 
     def update_tactile_state_cb(self, msg):
-        pass
+        if self.ignore_tactile_state:
+            rospy.loginfo("Ignoring tactile info")
+            return
+
+        for position in msg.tactile_info:
+            dof_name = position.header.frame_id.split("_")[1]
+
+            if dof_name == "link1":
+                self.activated_dofs[F1_DOF_INDEX] = 0
+            elif dof_name == "link2":
+                self.activated_dofs[F2_DOF_INDEX] = 0
+            elif dof_name == "link3":
+                self.activated_dofs[F3_DOF_INDEX] = 0
+                
+            self.tactile_info.add(position.header.frame_id)
+
+    def reset_tactile_state(self, req):
+        rospy.loginfo("Resetting tactile state")
+
+        self.activated_dofs = np.ones(4)
+        self.tactile_info = set()
+        return std_srvs.srv.EmptyResponse()
+
+    def set_ignore_tactile_state(self, ignore_flag):
+        rospy.loginfo("Setting ignore tactile to {}".format(ignore_flag))
+        self.ignore_tactile_state = ignore_flag
+        return std_srvs.srv.SetBoolResponse(success=True, message="Flag set correctly")
+
+    def get_tactile_info(self, req):
+        return barrett_trajectory_action_server.srv.GetTactileContacts(active_sensors=list(self.tactile_info))
 
 
 if __name__ == "__main__":
     rospy.init_node("Barrett_Trajectory_Follower", log_level=rospy.DEBUG)
-    joint_trajectory_follower =   JointTracjectoryActionServer()
+    joint_trajectory_follower = JointTracjectoryActionServer()
     rospy.spin()
