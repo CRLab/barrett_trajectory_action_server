@@ -82,6 +82,7 @@ class JointTracjectoryActionServer(object):
         # Sends INIT action to the server
         self.bhand_node_name = "bhand_node"
         self._actions_service_name = '/%s/actions'%self.bhand_node_name
+        rospy.wait_for_service(self._actions_service_name)
         self._service_bhand_actions = rospy.ServiceProxy(self._actions_service_name, Actions)
         self.send_bhand_action(Service.INIT_HAND)
 
