@@ -292,8 +292,8 @@ class JointTracjectoryActionServer(object):
             gain = np.array([0.6, 0.6, 0.6, 0.6])
             current_position_error = current_dof_np - waypoint_np
             if not np.allclose(
-                    waypoint_np,
-                    current_dof_np,
+                    waypoint_np * self.activated_dofs,
+                    current_dof_np * self.activated_dofs,
                     atol=self.EXECUTION_WAYPOINT_THRESHOLD):
                 rospy.logerr(
                     "STOPPING EXECUTE TRAJECTORY: our current dof values: %s, are far from the expected current dof values: %s"
@@ -352,7 +352,7 @@ class JointTracjectoryActionServer(object):
                 # waypoint, then we can break out of the while loop
                 # and move onto the next waypoint
                 if np.allclose(
-                        current_position_error,
+                        current_position_error * self.activated_dofs,
                         np.zeros_like(current_position_error),
                         atol=tolerance):
                     break
