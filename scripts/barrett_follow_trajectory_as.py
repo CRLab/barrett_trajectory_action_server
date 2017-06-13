@@ -12,9 +12,12 @@ from control_msgs.msg import (FollowJointTrajectoryAction,
                               FollowJointTrajectoryResult)
 
 from barrett_tactile_msgs.msg import TactileInfo
-from bhand_controller.srv import SetControlMode
+from bhand_controller.srv import Actions, SetControlMode
+from bhand_controller.msg import State, TactileArray, Service
 
 from collections import namedtuple, defaultdict
+
+import tactile_maps
 
 # Named Tuple reprenting the dof state of the hand
 DOF_STATE = namedtuple("DOF", ["spread", "f1", "f2", "f3"])
@@ -31,29 +34,6 @@ F1_WAYPOINT_INDEX = 1
 F2_WAYPOINT_INDEX = 2
 F3_WAYPOINT_INDEX = 3
 
-
-#INIT NODE code
-
-# try:
-#     self._service_bhand_actions = rospy.ServiceProxy(self._actions_service_name, Actions)
-# except ValueError, e:
-#     rospy.logerr('BHandGUI: Error connecting service (%s)'%e)
-
-# def send_bhand_action(self, action):    
-#     '''
-#         Calls the service to set the control mode of the hand
-#         @param action: Action number (defined in msgs/Service.msg)
-#         @type action: int
-#     '''         
-#     try:
-#         ret = self._service_bhand_actions(action)               
-#     except ValueError, e:
-#         rospy.logerr('BHandGUI::send_bhand_action: (%s)'%e)
-#     except rospy.ServiceException, e:
-#         rospy.logerr('BHandGUI::send_bhand_action: (%s)'%e)
-#         QMessageBox.warning(self._widget, "Warning", "Service is not available: send_bhand_action")
-
-# self.send_bhand_action(Service.INIT_HAND)
 
 #Get Tactile Info Code
 # self._tact_topic = '/%s/tact_array'%self.bhand_node_name 
@@ -95,11 +75,27 @@ class JointTracjectoryActionServer(object):
             execute_cb=self._follow_joint_trajectory_cb,
             auto_start=False)
 
+        # This creates a proxy for the action server for barrett hand
+        # Sends INIT action to the server
+        self.bhand_node_name = "bhand_node"
+        self._actions_service_name = '/%s/actions'%self.bhand_node_name
+        self._service_bhand_actions = rospy.ServiceProxy(self._actions_service_name, Actions)
+        self.send_bhand_action(Service.INIT_HAND)
+
+        self._f1_offsets   = np.zeros(24)
+        self._f2_offsets   = np.zeros(24)
+        self._f3_offsets   = np.zeros(24)
+        self._palm_offsets = np.zeros(24)
+
+        #COMMENT
+        self._tact_data = TactileArray()
+
         # This subscribers listens for the raw tactile information 
         # from the hand
-        self._tactile_sub = rospy.Subscriber("/bhand_node/tactile_info",
-                                             TactileInfo,
-                                             self.update_tactile_state_cb)
+        self._tact_topic = '/%s/tact_array'%self.bhand_node_name
+        self._tactile_sub = rospy.Subscriber(self._tact_topic,
+                                             TactileArray,
+                                             self._receive_tact_data)
 
         #This subscriber gets the current joint states of the hand
         self._joint_sub = rospy.Subscriber("/joint_states",
@@ -191,12 +187,58 @@ class JointTracjectoryActionServer(object):
         # position specified at the first waypoint of the trajectory
         self.START_POINT_THRESHOLD = 0.1
 
+        #COMMENTS
+        self.TACTILE_THRESHOLD = 1.0
+
         # This in HZ is how often we send a command to the hand from within
         # the follow trajectory callback
         self.control_rate = 10  #Hz
 
         # actually start the action server to listen for new trajectories to follow.
         self.action_server.start()
+
+
+    def send_bhand_action(self, action):    
+        '''
+            Calls the service to set the control mode of the hand
+            @param action: Action number (defined in msgs/Service.msg)
+            @type action: int
+        '''         
+        try:
+            ret = self._service_bhand_actions(action)               
+        except ValueError, e:
+            rospy.logerr('BHandGUI::send_bhand_action: (%s)'%e)
+        except rospy.ServiceException, e:
+            rospy.logerr('BHandGUI::send_bhand_action: (%s)'%e)
+
+    def _receive_tact_data(self, msg):
+        if self.ignore_tactile_state:
+            # rospy.loginfo("Ignoring tactile info")
+            return
+            
+        self._tact_data = msg
+
+        finger1_array = np.array(msg.finger1)
+        finger2_array = np.array(msg.finger2)
+        finger3_array = np.array(msg.finger3)
+        # palm_array = np.array(msg.palm)
+
+        finger1_nonzero = np.where((finger1_array - self._f1_offsets) > self.TACTILE_THRESHOLD)[0]
+        finger2_nonzero = np.where((finger2_array - self._f2_offsets) > self.TACTILE_THRESHOLD)[0]
+        finger3_nonzero = np.where((finger3_array - self._f3_offsets) > self.TACTILE_THRESHOLD)[0]
+        # palm_nonzero = np.where((palm_array - self._palm_offsets) > self.TACTILE_THRESHOLD)
+
+        map(lambda frame_id: self.tactile_info.add(tactile_maps.tact_to_finger1_map[frame_id]), finger1_nonzero)
+        map(lambda frame_id: self.tactile_info.add(tactile_maps.tact_to_finger2_map[frame_id]), finger2_nonzero)
+        map(lambda frame_id: self.tactile_info.add(tactile_maps.tact_to_finger3_map[frame_id]), finger3_nonzero)
+        # map(lamba frame_id: self.tactile_info.add(tactile_maps.tact_to_palm_map[frame_id]), np.where(palm_array > self.TACTILE_THRESHOLD))
+
+        if len(finger1_nonzero) > 0:
+            self.activated_dofs[F1_DOF_INDEX] = 0
+        if len(finger2_nonzero) > 0:
+            self.activated_dofs[F2_DOF_INDEX] = 0
+        if len(finger3_nonzero) > 0:
+            self.activated_dofs[F3_DOF_INDEX] = 0
 
     def _follow_joint_trajectory_cb(self, goal):
 
@@ -325,28 +367,18 @@ class JointTracjectoryActionServer(object):
                 f3=msg.position[3])
             self.current_joint_and_dof_state_mutex.release()
 
-    def update_tactile_state_cb(self, msg):
-        if self.ignore_tactile_state:
-            rospy.loginfo("Ignoring tactile info")
-            return
-
-        for position in msg.tactile_info:
-            dof_name = position.header.frame_id.split("_")[1]
-
-            if dof_name == "link1":
-                self.activated_dofs[F1_DOF_INDEX] = 0
-            elif dof_name == "link2":
-                self.activated_dofs[F2_DOF_INDEX] = 0
-            elif dof_name == "link3":
-                self.activated_dofs[F3_DOF_INDEX] = 0
-
-            self.tactile_info.add(position.header.frame_id)
-
     def reset_tactile_state(self, req):
         rospy.loginfo("Resetting tactile state")
 
         self.activated_dofs = np.ones(4)
         self.tactile_info = set()
+
+        #REZERO
+        self._f1_offsets = np.array(self._tact_data.finger1)
+        self._f2_offsets = np.array(self._tact_data.finger2)
+        self._f3_offsets = np.array(self._tact_data.finger3)
+        self._palm_offsets = np.array(self._tact_data.palm)
+
         return std_srvs.srv.EmptyResponse()
 
     def set_ignore_tactile_state(self, ignore_flag):
@@ -356,7 +388,7 @@ class JointTracjectoryActionServer(object):
             success=True, message="Flag set correctly")
 
     def get_tactile_info(self, req):
-        return barrett_trajectory_action_server.srv.GetTactileContacts(
+        return barrett_trajectory_action_server.srv.GetTactileContactsResponse(
             active_sensors=list(self.tactile_info))
 
 
