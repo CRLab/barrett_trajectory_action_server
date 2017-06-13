@@ -1,1 +1,1 @@
-std_msgs/String[] tactile_frames
+string[] tactile_frames
