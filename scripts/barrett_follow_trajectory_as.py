@@ -5,6 +5,8 @@ import threading
 import numpy as np
 import std_srvs.srv
 import barrett_trajectory_action_server.srv
+import barrett_trajectory_action_server.msg
+
 from actionlib import SimpleActionServer
 
 from control_msgs.msg import (FollowJointTrajectoryAction,
@@ -14,6 +16,7 @@ from control_msgs.msg import (FollowJointTrajectoryAction,
 from barrett_tactile_msgs.msg import TactileInfo
 from bhand_controller.srv import Actions, SetControlMode
 from bhand_controller.msg import State, TactileArray, Service
+from barrett_tactile_msgs.msg import TactileInfo
 
 from collections import namedtuple, defaultdict
 
@@ -129,10 +132,16 @@ class JointTracjectoryActionServer(object):
 
         # This allows a client to get the frames of reference
         # for tactile contacts which have stopped hand movement.
-        self.service_get_tactile_info = rospy.Service(
+        # self.service_get_tactile_info = rospy.Service(
+        #     '/barrett/get_tactile_info',
+        #     barrett_trajectory_action_server.srv.GetTactileContacts,
+        #     self.get_tactile_info)
+
+        self.publisher_get_tactile_info = rospy.Publisher(
             '/barrett/get_tactile_info',
-            barrett_trajectory_action_server.srv.GetTactileContacts,
-            self.get_tactile_info)
+            barrett_trajectory_action_server.msg.TactileContactFrames,
+            queue_size=10
+        )
 
         #This mutex locks the current joint and dof state
         self.current_joint_and_dof_state_mutex = threading.Lock()
@@ -197,6 +206,12 @@ class JointTracjectoryActionServer(object):
         # actually start the action server to listen for new trajectories to follow.
         self.action_server.start()
 
+        loop = rospy.Rate(10)
+        while not rospy.is_shutdown():
+            response = barrett_trajectory_action_server.msg.TactileContactFrames(tactile_frames=list(self.tactile_info))
+
+            publisher_get_tactile_info.publish(response)
+            loop.sleep()
 
     def send_bhand_action(self, action):    
         '''
