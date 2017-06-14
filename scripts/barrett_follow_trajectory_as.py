@@ -284,6 +284,9 @@ class JointTracjectoryActionServer(object):
 
         for i, waypoint in enumerate(goal.trajectory.points):
 
+            tactile_info_msg = barrett_trajectory_action_server.msg.TactileContactFrames(tactile_frames=list(self.tactile_info))
+            self.publisher_get_tactile_info.publish(tactile_info_msg)
+
             # first make sure we have not deviated to far from trajectory
             # abort if so
             current_dof_np = dof_state_to_np(self.current_dof)
