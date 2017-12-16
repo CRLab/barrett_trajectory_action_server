@@ -198,7 +198,7 @@ class JointTracjectoryActionServer(object):
         self.START_POINT_THRESHOLD = 0.1
 
         #COMMENTS
-        self.TACTILE_THRESHOLD = 1.0
+        self.TACTILE_THRESHOLD = 0.7
 
         # This in HZ is how often we send a command to the hand from within
         # the follow trajectory callback
@@ -292,7 +292,7 @@ class JointTracjectoryActionServer(object):
             current_dof_np = dof_state_to_np(self.current_dof)
             waypoint_np = waypoint_to_np(waypoint)
 
-            gain = np.array([0.6, 0.6, 0.6, 0.6])
+            gain = np.array([1.0, 1.0, 1.0, 1.0])
             current_position_error = current_dof_np - waypoint_np
             if not np.allclose(
                     waypoint_np * self.activated_dofs,
@@ -402,7 +402,9 @@ class JointTracjectoryActionServer(object):
         self._f3_offsets = np.array(self._tact_data.finger3)
         self._palm_offsets = np.array(self._tact_data.palm)
 
+        rospy.loginfo("Finished resetting tactile state")
         return std_srvs.srv.EmptyResponse()
+        #return ()
 
     def set_ignore_tactile_state(self, ignore_flag):
         rospy.loginfo("Setting ignore tactile to {}".format(ignore_flag))
