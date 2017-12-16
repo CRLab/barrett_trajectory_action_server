@@ -37,15 +37,6 @@ F1_WAYPOINT_INDEX = 1
 F2_WAYPOINT_INDEX = 2
 F3_WAYPOINT_INDEX = 3
 
-
-#Get Tactile Info Code
-# self._tact_topic = '/%s/tact_array'%self.bhand_node_name 
-# try:
-#     self._tact_subscriber = rospy.Subscriber(self._tact_topic, TactileArray, self._receive_tact_data)
-# except ValueError, e:
-#     rospy.logerr('BHandGUI: Error connecting topic (%s)'%e)
-
-
 def waypoint_to_np(wp):
     return np.array([
         wp.positions[SPREAD_WAYPOINT_INDEX],  # spread
@@ -411,10 +402,6 @@ class JointTracjectoryActionServer(object):
         self.ignore_tactile_state = ignore_flag
         return std_srvs.srv.SetBoolResponse(
             success=True, message="Flag set correctly")
-
-    def get_tactile_info(self, req):
-        return barrett_trajectory_action_server.srv.GetTactileContactsResponse(
-            active_sensors=list(self.tactile_info))
 
 
 if __name__ == "__main__":
