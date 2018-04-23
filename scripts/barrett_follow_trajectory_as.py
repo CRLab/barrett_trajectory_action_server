@@ -166,7 +166,7 @@ class JointTracjectoryActionServer(object):
         # This means that if a tactile sensor registers contact
         # beyond a threshold, that dof will no longer move until the 
         # tactile state if reset
-        self.ignore_tactile_state = False
+        self.ignore_tactile_state = True
 
         # This is used for computing the new dof velocities.
         # any dof that has had a tactile contact will have 
@@ -181,7 +181,7 @@ class JointTracjectoryActionServer(object):
         # This is the absolute tolerance for our dofs as we execute a trajectory.
         # If at any point in execution any true dof value is not within this threshold 
         # of the desired dof value, then the action server is aborted.
-        self.EXECUTION_WAYPOINT_THRESHOLD = 0.5
+        self.EXECUTION_WAYPOINT_THRESHOLD = 2.0
 
         # this is the absolute tolerance for our dofs at the start of trajectory execution. 
         # this ensure before we begin executing a trajectory that the hand is actually in the 
@@ -283,7 +283,7 @@ class JointTracjectoryActionServer(object):
             current_dof_np = dof_state_to_np(self.current_dof)
             waypoint_np = waypoint_to_np(waypoint)
 
-            gain = np.array([0.6, 0.6, 0.6, 0.6])
+            gain = np.array([0.4, 0.4, 0.4, 0.4])
             current_position_error = current_dof_np - waypoint_np
             if not np.allclose(
                     waypoint_np * self.activated_dofs,
@@ -321,7 +321,7 @@ class JointTracjectoryActionServer(object):
                 current_position_error = current_dof_np - waypoint_np
                 
                 # clip the range of the output velocity
-                velocity = np.clip(-gain * current_position_error, -0.1, 0.1)
+                velocity = np.clip(-gain * current_position_error, -0.4,  0.4)
                 
                 # mask the output velocity, only the activated dofs will move.
                 # the other dofs, disabled due to tactile contact will have their
@@ -340,7 +340,7 @@ class JointTracjectoryActionServer(object):
                     tolerance = 0.15
 
                 rospy.logdebug(
-                    "Velocity {}, tolerance {}".format(velocity, tolerance))
+                    "Position {} Velocity {}, tolerance {}".format(current_dof_np, velocity, tolerance))
 
                 # if we are within our tolerance of the current
                 # waypoint, then we can break out of the while loop
